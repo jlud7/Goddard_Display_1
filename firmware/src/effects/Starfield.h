@@ -62,7 +62,8 @@ public:
 
   void render(Canvas565& c) override {
     // Fade background instead of clearing (creates trails)
-    for (int i = 0; i < PANEL_RES_X * PANEL_RES_Y; i++) {
+    const int totalPixels = c.w() * c.h();
+    for (int i = 0; i < totalPixels; i++) {
       uint16_t px = c.data()[i];
       if (px == 0) continue;
       uint8_t r, g, b;

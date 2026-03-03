@@ -15,7 +15,9 @@ public:
   void handleCommand(const JsonVariantConst& params) override {
     if (params["text"].is<const char*>()) {
       _text = params["text"].as<const char*>();
+      if (_text.length() > 256) _text = _text.substring(0, 256);
       _offset = PANEL_RES_X; // restart scroll
+      _accum = 0;
     }
     if (params["speed"].is<int>()) _speed = constrain(params["speed"].as<int>(), 1, 20);
     if (params["color"].is<const char*>()) _setColor(params["color"].as<const char*>());

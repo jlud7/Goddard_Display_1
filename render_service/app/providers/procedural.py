@@ -502,7 +502,7 @@ class ProceduralProvider(Provider):
                       outline=(shade, shade, shade + 40), width=1)
 
         # Orbiting body
-        ang = (i / n) * math.tau
+        ang = (i / max(1, n)) * math.tau
         px = cx + int(math.cos(ang) * 40)
         py = cy + int(math.sin(ang) * 40)
 
@@ -528,7 +528,7 @@ class ProceduralProvider(Provider):
         W, H = 256, 128
         img = Image.new("RGB", (W, H), (2, 2, 8))
         d = ImageDraw.Draw(img)
-        t = i / n
+        t = i / max(1, n)
 
         # Pulsing concentric rings
         cx, cy = W // 2, H // 2
@@ -554,7 +554,7 @@ class ProceduralProvider(Provider):
         d = ImageDraw.Draw(img)
 
         cx, cy = W // 2, H // 2
-        t = i / n
+        t = i / max(1, n)
 
         # Warp-speed stars
         for s in range(100):

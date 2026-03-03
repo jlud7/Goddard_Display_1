@@ -14,7 +14,8 @@ static ApiServer* api = nullptr;
 
 static uint32_t lastTick = 0;
 static uint32_t lastSave = 0;
-static bool settingsDirty = false;
+static volatile bool settingsDirty = false;
+static bool wifiReady = false;
 
 void setup() {
   Serial.begin(115200);
@@ -48,14 +49,17 @@ void setup() {
   }
   controller.setMode(settings.mode, initDoc.as<JsonVariantConst>());
 
-  if (!Net::setupWifi()) {
-    while(true) delay(1000);
-  }
-  Net::setupMDNS();
-  Net::setupTime();
+  // WiFi is optional — effects run offline if WiFi fails
+  wifiReady = Net::setupWifi();
+  if (wifiReady) {
+    Net::setupMDNS();
+    Net::setupTime();
 
-  api = new ApiServer(controller, display, settings, settingsDirty);
-  api->begin();
+    api = new ApiServer(controller, display, settings, settingsDirty);
+    api->begin();
+  } else {
+    Log::warn("Boot", "WiFi failed — running in offline mode. Will retry in loop.");
+  }
 
   lastTick = millis();
   lastSave = millis();
@@ -74,7 +78,20 @@ void loop() {
 
   if (api) api->tickEvents(now);
 
-  Net::checkConnection();
+  // If WiFi wasn't ready at boot, retry periodically
+  if (!wifiReady) {
+    Net::checkConnection();
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiReady = true;
+      Log::info("Boot", "WiFi connected late — starting network services");
+      Net::setupMDNS();
+      Net::setupTime();
+      api = new ApiServer(controller, display, settings, settingsDirty);
+      api->begin();
+    }
+  } else {
+    Net::checkConnection();
+  }
 
   // Auto-save settings every 30s if dirty
   if (settingsDirty && (now - lastSave > 30000)) {

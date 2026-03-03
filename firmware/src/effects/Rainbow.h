@@ -15,7 +15,7 @@ public:
 
   void tick(uint32_t dt_ms) override {
     _phase += dt_ms * _speed * 0.001f;
-    if (_phase > 6.2831853f) _phase -= 6.2831853f;
+    _phase = fmodf(_phase, 6.2831853f);
   }
 
   void render(Canvas565& c) override {

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export type ToastType = "success" | "error" | "info";
 
@@ -18,16 +18,30 @@ const ICONS: Record<ToastType, string> = {
 export function useToast() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(0);
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  // Clean up all pending timers on unmount
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   const addToast = useCallback((message: string, type: ToastType = "info") => {
     const id = nextId.current++;
     setToasts((prev) => [...prev.slice(-4), { id, message, type }]);
-    setTimeout(() => {
+    const exitTimer = setTimeout(() => {
+      timersRef.current.delete(exitTimer);
       setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)));
-      setTimeout(() => {
+      const removeTimer = setTimeout(() => {
+        timersRef.current.delete(removeTimer);
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, 250);
+      timersRef.current.add(removeTimer);
     }, 3500);
+    timersRef.current.add(exitTimer);
   }, []);
 
   const removeToast = useCallback((id: number) => {

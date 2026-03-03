@@ -67,33 +67,45 @@ export function App() {
   const eventsWsRef = useRef<WebSocket | null>(null);
   const frameIdRef = useRef(0);
   const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsRetryRef = useRef(0);
   const eventsRetryRef = useRef(0);
   const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const brightnessRef = useRef(brightness);
 
   const { toasts, addToast, removeToast } = useToast();
 
+  // Keep brightness ref in sync for slider onMouseUp/onTouchEnd
+  useEffect(() => { brightnessRef.current = brightness; }, [brightness]);
+
+  // Debounce deviceBase so WS doesn't reconnect on every keystroke
+  const [debouncedDeviceBase, setDebouncedDeviceBase] = useState(deviceBase);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedDeviceBase(deviceBase), 500);
+    return () => clearTimeout(t);
+  }, [deviceBase]);
+
   const frameWsUrl = useMemo(() => {
     try {
-      const u = new URL(deviceBase);
+      const u = new URL(debouncedDeviceBase);
       const proto = u.protocol === "https:" ? "wss:" : "ws:";
       return `${proto}//${u.host}/ws/frame`;
     } catch {
       return "";
     }
-  }, [deviceBase]);
+  }, [debouncedDeviceBase]);
 
   const eventsWsUrl = useMemo(() => {
     try {
-      const u = new URL(deviceBase);
+      const u = new URL(debouncedDeviceBase);
       const proto = u.protocol === "https:" ? "wss:" : "ws:";
       return `${proto}//${u.host}/ws/events`;
     } catch {
       return "";
     }
-  }, [deviceBase]);
+  }, [debouncedDeviceBase]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -154,7 +166,10 @@ export function App() {
         try {
           const data = JSON.parse(ev.data);
           if (data.event === "telemetry" || data.event === "connect") {
-            setStatus((prev) => ({ ...(prev || {} as DeviceStatus), ...data }));
+            setStatus((prev) => {
+              if (!prev) return prev; // don't build partial status from telemetry alone
+              return { ...prev, ...data };
+            });
             if (data.mode) setMode(data.mode);
           }
         } catch { /* ignore malformed */ }
@@ -183,10 +198,11 @@ export function App() {
     }
   }
 
-  async function generateImage() {
+  async function generateImage(overridePrompt?: string) {
+    const p = overridePrompt ?? prompt;
     setLoading("image");
     try {
-      const res = await postJson(`${renderBase}/render/image`, { prompt, seed, style: "pixel_art" });
+      const res = await postJson(`${renderBase}/render/image`, { prompt: p, seed, style: "pixel_art" }) as { rgb565_b64: string };
       const u16 = decodeB64ToU16LE(res.rgb565_b64);
       setFrame(u16);
       setAnimFrames([]);
@@ -199,12 +215,13 @@ export function App() {
     }
   }
 
-  async function generateAnim() {
+  async function generateAnim(overridePrompt?: string) {
+    const p = overridePrompt ?? prompt;
     setLoading("anim");
     try {
       const res = await postJson(`${renderBase}/render/anim`, {
-        prompt, seed, frames: 24, fps: animFps, style: "pixel_anim",
-      });
+        prompt: p, seed, frames: 24, fps: animFps, style: "pixel_anim",
+      }) as { frames_b64: string[] };
       const frames: Uint16Array[] = res.frames_b64.map((b64: string) => decodeB64ToU16LE(b64));
       setAnimFrames(frames);
       setFrame(frames[0] ?? null);
@@ -227,11 +244,15 @@ export function App() {
     ws.send(pkt);
   }
 
+  function stopPlayback() {
+    if (playTimerRef.current) { clearInterval(playTimerRef.current); playTimerRef.current = null; }
+    if (playStopTimerRef.current) { clearTimeout(playStopTimerRef.current); playStopTimerRef.current = null; }
+    setPlaying(false);
+  }
+
   async function playAnimOnDevice() {
     if (playTimerRef.current) {
-      clearInterval(playTimerRef.current);
-      playTimerRef.current = null;
-      setPlaying(false);
+      stopPlayback();
       addToast("Playback stopped", "info");
       return;
     }
@@ -259,23 +280,25 @@ export function App() {
     setPlaying(true);
 
     playTimerRef.current = setInterval(() => {
+      const currentWs = wsRef.current;
+      if (!currentWs || currentWs.readyState !== WebSocket.OPEN) {
+        stopPlayback();
+        return;
+      }
       try {
-        sendFrameOnce(frames[i]);
+        const pkt = makeFramePacketRGB565(frames[i], frameIdRef.current++);
+        currentWs.send(pkt);
         setPreviewIdx(i);
         setFrame(frames[i]);
         i = (i + 1) % frames.length;
       } catch {
-        if (playTimerRef.current) clearInterval(playTimerRef.current);
-        playTimerRef.current = null;
-        setPlaying(false);
+        stopPlayback();
       }
     }, interval);
 
-    setTimeout(() => {
+    playStopTimerRef.current = setTimeout(() => {
       if (playTimerRef.current) {
-        clearInterval(playTimerRef.current);
-        playTimerRef.current = null;
-        setPlaying(false);
+        stopPlayback();
         addToast("Playback finished", "info");
       }
     }, totalDuration);
@@ -336,6 +359,7 @@ export function App() {
   useEffect(() => {
     return () => {
       if (playTimerRef.current) clearInterval(playTimerRef.current);
+      if (playStopTimerRef.current) clearTimeout(playStopTimerRef.current);
     };
   }, []);
 
@@ -440,8 +464,8 @@ export function App() {
                     value={brightness}
                     aria-label="Brightness"
                     onChange={(e) => setBrightness(parseInt(e.target.value, 10))}
-                    onMouseUp={() => setDeviceBrightness(brightness)}
-                    onTouchEnd={() => setDeviceBrightness(brightness)}
+                    onMouseUp={() => setDeviceBrightness(brightnessRef.current)}
+                    onTouchEnd={() => setDeviceBrightness(brightnessRef.current)}
                   />
                 </div>
               </div>
@@ -471,10 +495,10 @@ export function App() {
               </div>
             </div>
             <div className="row gap-sm">
-              <button className="btn btn-primary" disabled={!!loading} onClick={generateImage}>
+              <button className="btn btn-primary" disabled={!!loading} onClick={() => generateImage()}>
                 {loading === "image" ? <><span className="spinner" /> Generating...</> : "Generate Image"}
               </button>
-              <button className="btn btn-primary" disabled={!!loading} onClick={generateAnim}>
+              <button className="btn btn-primary" disabled={!!loading} onClick={() => generateAnim()}>
                 {loading === "anim" ? <><span className="spinner" /> Generating...</> : "Generate Animation"}
               </button>
               <button className="btn" disabled={!frame} onClick={() => { if (frame) { setDeviceMode("anim_player"); sendFrameOnce(frame); } }}>
@@ -487,18 +511,18 @@ export function App() {
             <div className="section-divider" />
             <div className="section-title">Presets</div>
             <div className="preset-grid">
-              <button className="btn-preset" onClick={() => { setPrompt("mario pixel sprite"); generateImage(); }}>Mario</button>
-              <button className="btn-preset" onClick={() => { setPrompt("metroid floating orb"); generateImage(); }}>Metroid</button>
-              <button className="btn-preset" onClick={() => { setPrompt("zelda triforce sword"); generateImage(); }}>Zelda</button>
-              <button className="btn-preset" onClick={() => { setPrompt("random pokemon"); generateImage(); }}>Pokemon</button>
-              <button className="btn-preset" onClick={() => { setPrompt("dragon breathing fire"); generateAnim(); }}>Dragon</button>
-              <button className="btn-preset" onClick={() => { setPrompt("rain falling city"); generateAnim(); }}>Rain</button>
-              <button className="btn-preset" onClick={() => { setPrompt("time orbiting clock"); generateAnim(); }}>Orbit</button>
-              <button className="btn-preset" onClick={() => { setPrompt("neon abstract shapes"); generateImage(); }}>Abstract</button>
-              <button className="btn-preset" onClick={() => { setPrompt("sunset landscape"); generateImage(); }}>Sunset</button>
-              <button className="btn-preset" onClick={() => { setPrompt("space galaxy"); generateImage(); }}>Galaxy</button>
-              <button className="btn-preset" onClick={() => { setPrompt("fire flames burning"); generateAnim(); }}>Fire</button>
-              <button className="btn-preset" onClick={() => { setPrompt("starfield warp speed"); generateAnim(); }}>Warp</button>
+              <button className="btn-preset" onClick={() => { setPrompt("mario pixel sprite"); generateImage("mario pixel sprite"); }}>Mario</button>
+              <button className="btn-preset" onClick={() => { setPrompt("metroid floating orb"); generateImage("metroid floating orb"); }}>Metroid</button>
+              <button className="btn-preset" onClick={() => { setPrompt("zelda triforce sword"); generateImage("zelda triforce sword"); }}>Zelda</button>
+              <button className="btn-preset" onClick={() => { setPrompt("random pokemon"); generateImage("random pokemon"); }}>Pokemon</button>
+              <button className="btn-preset" onClick={() => { setPrompt("dragon breathing fire"); generateAnim("dragon breathing fire"); }}>Dragon</button>
+              <button className="btn-preset" onClick={() => { setPrompt("rain falling city"); generateAnim("rain falling city"); }}>Rain</button>
+              <button className="btn-preset" onClick={() => { setPrompt("time orbiting clock"); generateAnim("time orbiting clock"); }}>Orbit</button>
+              <button className="btn-preset" onClick={() => { setPrompt("neon abstract shapes"); generateImage("neon abstract shapes"); }}>Abstract</button>
+              <button className="btn-preset" onClick={() => { setPrompt("sunset landscape"); generateImage("sunset landscape"); }}>Sunset</button>
+              <button className="btn-preset" onClick={() => { setPrompt("space galaxy"); generateImage("space galaxy"); }}>Galaxy</button>
+              <button className="btn-preset" onClick={() => { setPrompt("fire flames burning"); generateAnim("fire flames burning"); }}>Fire</button>
+              <button className="btn-preset" onClick={() => { setPrompt("starfield warp speed"); generateAnim("starfield warp speed"); }}>Warp</button>
             </div>
           </div>
 

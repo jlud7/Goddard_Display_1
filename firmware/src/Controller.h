@@ -13,6 +13,7 @@
 class Controller {
 public:
   void begin() {
+    _current = nullptr; // prevent use-after-free during clear
     _effects.clear();
     _effects.push_back(std::unique_ptr<Effect>(new ClockFun()));
     _effects.push_back(std::unique_ptr<Effect>(new WeatherFun()));

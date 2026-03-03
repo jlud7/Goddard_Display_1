@@ -43,11 +43,17 @@ public:
     f.close();
 
     if (doc["brightness"].is<int>()) brightness = constrain(doc["brightness"].as<int>(), 0, 255);
-    if (doc["mode"].is<const char*>()) mode = doc["mode"].as<const char*>();
+    if (doc["mode"].is<const char*>()) {
+      String m = doc["mode"].as<const char*>();
+      if (m.length() <= 32) mode = m;
+    }
     if (doc["gamma"].is<bool>()) gamma = doc["gamma"].as<bool>();
-    if (doc["clockStyle"].is<int>()) clockStyle = doc["clockStyle"].as<int>();
+    if (doc["clockStyle"].is<int>()) clockStyle = constrain(doc["clockStyle"].as<int>(), 0, 2);
     if (doc["clockBlink"].is<bool>()) clockBlink = doc["clockBlink"].as<bool>();
-    if (doc["scrollText"].is<const char*>()) scrollText = doc["scrollText"].as<const char*>();
+    if (doc["scrollText"].is<const char*>()) {
+      String t = doc["scrollText"].as<const char*>();
+      if (t.length() <= 256) scrollText = t;
+    }
 
     Log::info("Settings", String("Loaded: mode=") + mode + " brightness=" + String(brightness));
     return true;

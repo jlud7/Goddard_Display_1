@@ -131,6 +131,8 @@ public:
   }
 
   void swapAndShow() {
+    if (!_matrix) return;
+
     // Smooth brightness transitions
     if (_currentBrightness != _targetBrightness) {
       if (_currentBrightness < _targetBrightness) {

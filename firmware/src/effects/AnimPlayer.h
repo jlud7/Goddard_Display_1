@@ -17,6 +17,7 @@ public:
     _readIdx = 0;
     _writeIdx = 0;
     _queued = 0;
+    _everReceived = false;
     memset(_frames, 0, sizeof(_frames));
   }
 
@@ -58,13 +59,21 @@ public:
 
   void pushFrameRGB565(const uint16_t* frame, size_t pixels) override {
     if (pixels != (size_t)PANEL_RES_X * PANEL_RES_Y) return;
-    // Write to next slot; keep one frame as current read.
+
+    // Don't overwrite the slot currently being read
     int next = (_writeIdx + 1) % FRAME_JITTER_BUFFER;
+    if (next == _readIdx && _queued > 0) {
+      // Buffer full — drop this frame to prevent tearing
+      return;
+    }
+
     memcpy(_frames[next], frame, (size_t)PANEL_RES_X * PANEL_RES_Y * 2);
     _writeIdx = next;
+    _everReceived = true;
     if (_queued < FRAME_JITTER_BUFFER - 1) _queued++;
+
     // If we had nothing, immediately point read at this frame.
-    if (!_hasAny()) _readIdx = _writeIdx;
+    if (_queued == 1 && _frameCount == 0) _readIdx = _writeIdx;
   }
 
 private:
@@ -74,6 +83,7 @@ private:
   int _fps = 12;
   uint32_t _accum = 0;
   uint32_t _frameCount = 0;
+  bool _everReceived = false;
 
   // ring buffer
   uint16_t _frames[FRAME_JITTER_BUFFER][PANEL_RES_X * PANEL_RES_Y];
@@ -81,5 +91,5 @@ private:
   int _writeIdx = 0;
   int _queued = 0;
 
-  inline bool _hasAny() const { return _queued > 0 || _frameCount > 0; }
+  inline bool _hasAny() const { return _queued > 0 || _everReceived; }
 };

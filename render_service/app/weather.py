@@ -1,7 +1,10 @@
+import functools
 import requests
 
 
-def get_weather_fun(location: str = "Miami,FL", units: str = "imperial") -> dict:
+@functools.lru_cache(maxsize=64)
+def _geocode(location: str) -> dict | None:
+    """Cache geocoding results to avoid redundant API calls for the same location."""
     try:
         geo = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
@@ -9,12 +12,23 @@ def get_weather_fun(location: str = "Miami,FL", units: str = "imperial") -> dict
             timeout=10,
         ).json()
     except (requests.RequestException, ValueError):
-        return {"ok": False, "error": "geocode_request_failed"}
+        return None
 
-    if not geo.get("results"):
+    results = geo.get("results")
+    if not results or not isinstance(results, list) or len(results) == 0:
+        return None
+
+    r = results[0]
+    if "latitude" not in r or "longitude" not in r:
+        return None
+    return r
+
+
+def get_weather_fun(location: str = "Miami,FL", units: str = "imperial") -> dict:
+    r = _geocode(location)
+    if r is None:
         return {"ok": False, "error": "geocode_failed"}
 
-    r = geo["results"][0]
     lat, lon = r["latitude"], r["longitude"]
 
     temp_unit = "fahrenheit" if units == "imperial" else "celsius"
@@ -35,6 +49,9 @@ def get_weather_fun(location: str = "Miami,FL", units: str = "imperial") -> dict
         ).json()
     except (requests.RequestException, ValueError):
         return {"ok": False, "error": "weather_request_failed"}
+
+    if not isinstance(wx, dict):
+        return {"ok": False, "error": "weather_response_invalid"}
 
     cur = wx.get("current") or {}
     code = cur.get("weather_code", 0)
