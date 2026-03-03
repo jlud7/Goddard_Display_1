@@ -19,12 +19,10 @@ export function PixelPreview({ frame, scale = 6 }: Props) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Clear to deep black
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, cw, ch);
 
     if (!frame) {
-      // Draw idle crosshair pattern
       ctx.strokeStyle = "rgba(59,125,255,0.08)";
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -36,20 +34,31 @@ export function PixelPreview({ frame, scale = 6 }: Props) {
       return;
     }
 
-    // Render pixels
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const c = frame[y * W + x];
-        if (c === 0) continue; // skip black pixels for performance
-        const [r, g, b] = rgb565ToRgb888(c);
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.fillRect(x * scale, y * scale, scale, scale);
-      }
+    // Build a 1:1 ImageData at native resolution, then scale up — much faster
+    // than 2048 individual fillRect calls
+    const imgData = ctx.createImageData(W, H);
+    const pixels = imgData.data;
+    for (let i = 0; i < W * H; i++) {
+      const [r, g, b] = rgb565ToRgb888(frame[i]);
+      const off = i * 4;
+      pixels[off] = r;
+      pixels[off + 1] = g;
+      pixels[off + 2] = b;
+      pixels[off + 3] = 255;
     }
 
-    // Subtle grid overlay for pixel definition
+    // Render to offscreen canvas at 1:1, then draw scaled
+    const offscreen = new OffscreenCanvas(W, H);
+    const offCtx = offscreen.getContext("2d");
+    if (offCtx) {
+      offCtx.putImageData(imgData, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(offscreen, 0, 0, cw, ch);
+    }
+
+    // Subtle grid overlay at larger scales
     if (scale >= 4) {
-      ctx.strokeStyle = "rgba(255,255,255,0.015)";
+      ctx.strokeStyle = "rgba(255,255,255,0.02)";
       ctx.lineWidth = 0.5;
       ctx.beginPath();
       for (let x = 0; x <= W; x++) {
@@ -64,5 +73,5 @@ export function PixelPreview({ frame, scale = 6 }: Props) {
     }
   }, [frame, scale]);
 
-  return <canvas ref={ref} style={{ aspectRatio: `${W}/${H}` }} />;
+  return <canvas ref={ref} style={{ aspectRatio: `${W}/${H}` }} aria-label="64x32 pixel preview" />;
 }

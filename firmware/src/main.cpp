@@ -74,6 +74,8 @@ void loop() {
 
   if (api) api->tickEvents(now);
 
+  Net::checkConnection();
+
   // Auto-save settings every 30s if dirty
   if (settingsDirty && (now - lastSave > 30000)) {
     settings.brightness = display.brightness();

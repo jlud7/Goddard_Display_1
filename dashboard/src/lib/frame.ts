@@ -2,9 +2,13 @@ export const W = 64;
 export const H = 32;
 
 export function rgb565ToRgb888(c: number): [number, number, number] {
-  const r = (c >> 8) & 0xF8;
-  const g = (c >> 3) & 0xFC;
-  const b = (c << 3) & 0xF8;
+  // Extract and scale to full 0-255 range by replicating high bits into low bits
+  const r5 = (c >> 11) & 0x1F;
+  const g6 = (c >> 5)  & 0x3F;
+  const b5 = c & 0x1F;
+  const r = (r5 << 3) | (r5 >> 2); // 5-bit -> 8-bit: 31 -> 255
+  const g = (g6 << 2) | (g6 >> 4); // 6-bit -> 8-bit: 63 -> 255
+  const b = (b5 << 3) | (b5 >> 2); // 5-bit -> 8-bit: 31 -> 255
   return [r, g, b];
 }
 

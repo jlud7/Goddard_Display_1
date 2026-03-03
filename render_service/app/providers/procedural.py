@@ -33,14 +33,16 @@ class ProceduralProvider(Provider):
     def animation(self, prompt: str, frames: int, seed: int | None = None) -> list[Image.Image]:
         rng = random.Random(seed)
         prompt_l = prompt.lower()
+        frames = max(2, frames)  # prevent division by zero
+        denom = frames - 1
         if "dragon" in prompt_l and ("fire" in prompt_l or "breath" in prompt_l):
-            return [self._dragon_frame(t=i / (frames - 1), rng=random.Random(seed)) for i in range(frames)]
+            return [self._dragon_frame(t=i / denom, rng=random.Random(seed)) for i in range(frames)]
         if "rain" in prompt_l:
             return [self._rain_frame(i, rng=random.Random(seed)) for i in range(frames)]
         if "time" in prompt_l or "orbit" in prompt_l:
             return [self._clock_orbit_frame(i, frames, rng=random.Random(seed)) for i in range(frames)]
         if "fire" in prompt_l or "flame" in prompt_l:
-            return [self._fire_frame(i / (frames - 1), rng=random.Random(seed)) for i in range(frames)]
+            return [self._fire_frame(i / denom, rng=random.Random(seed)) for i in range(frames)]
         if "neon" in prompt_l or "pulse" in prompt_l:
             return [self._neon_pulse_frame(i, frames, rng=random.Random(seed)) for i in range(frames)]
         if "star" in prompt_l or "space" in prompt_l:
@@ -226,7 +228,7 @@ class ProceduralProvider(Provider):
         # Sky gradient
         for y in range(60):
             shade = int(100 + y * 2)
-            d.line((0, y, W, y), fill=(shade, shade + 40, 255))
+            d.line((0, y, W, y), fill=(shade, min(255, shade + 40), 255))
 
         # Grass
         d.rectangle((0, 60, W, H), fill=(30, 140, 50))
@@ -398,9 +400,9 @@ class ProceduralProvider(Provider):
                 if progress < 0.3:
                     color = (255, 240, 180)
                 elif progress < 0.6:
-                    color = (255, int(180 - progress * 200), 20)
+                    color = (255, max(0, int(180 - progress * 200)), 20)
                 else:
-                    color = (int(200 - progress * 150), int(40 - progress * 40), 0)
+                    color = (max(0, int(200 - progress * 150)), max(0, int(40 - progress * 40)), 0)
                 d.rectangle((x, y, x + 3, y + 1), fill=color)
 
         # Embers

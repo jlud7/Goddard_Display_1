@@ -7,6 +7,15 @@ import { Toaster, useToast } from "./Toast";
 
 type ModeId = "clock_fun" | "weather_fun" | "anim_player" | "rainbow" | "starfield" | "text_scroll";
 
+interface DeviceStatus {
+  mode: ModeId;
+  brightness: number;
+  gamma: boolean;
+  heapFree: number;
+  uptimeMs: number;
+  firmware?: string;
+}
+
 const MODE_LABELS: Record<ModeId, string> = {
   clock_fun: "Clock",
   weather_fun: "Weather",
@@ -15,6 +24,8 @@ const MODE_LABELS: Record<ModeId, string> = {
   starfield: "Starfield",
   text_scroll: "Scroller",
 };
+
+const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
 
 function formatUptime(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -31,30 +42,36 @@ function formatHeap(bytes: number): string {
 }
 
 export function App() {
-  const [deviceBase, setDeviceBase] = useState<string>("http://led64x32.local");
-  const [renderBase, setRenderBase] = useState<string>("http://localhost:8787");
-  const [status, setStatus] = useState<any>(null);
+  const [deviceBase, setDeviceBase] = useState("http://led64x32.local");
+  const [renderBase, setRenderBase] = useState("http://localhost:8787");
+  const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [mode, setMode] = useState<ModeId>("clock_fun");
-  const [brightness, setBrightness] = useState<number>(160);
+  const [brightness, setBrightness] = useState(160);
 
-  const [prompt, setPrompt] = useState<string>("dragon breathing fire");
-  const [seed, setSeed] = useState<number>(1234);
+  const [prompt, setPrompt] = useState("dragon breathing fire");
+  const [seed, setSeed] = useState(1234);
 
   const [frame, setFrame] = useState<Uint16Array | null>(null);
   const [animFrames, setAnimFrames] = useState<Uint16Array[]>([]);
-  const [animFps, setAnimFps] = useState<number>(12);
-  const [previewIdx, setPreviewIdx] = useState<number>(0);
+  const [animFps, setAnimFps] = useState(12);
+  const [previewIdx, setPreviewIdx] = useState(0);
 
   const [loading, setLoading] = useState<string | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
   const [weatherLocation, setWeatherLocation] = useState("Miami, FL");
 
   const wsRef = useRef<WebSocket | null>(null);
   const eventsWsRef = useRef<WebSocket | null>(null);
-  const frameId = useRef<number>(0);
+  const frameIdRef = useRef(0);
   const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wsRetryRef = useRef(0);
+  const eventsRetryRef = useRef(0);
+  const wsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   const { toasts, addToast, removeToast } = useToast();
 
@@ -80,7 +97,7 @@ export function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const s = await getJson(`${deviceBase}/api/status`);
+      const s: DeviceStatus = await getJson(`${deviceBase}/api/status`);
       setStatus(s);
       setBrightness(s.brightness);
       setMode(s.mode);
@@ -89,39 +106,62 @@ export function App() {
     }
   }, [deviceBase]);
 
-  function connectFrameWs() {
-    if (!frameWsUrl) return;
-    if (wsRef.current) wsRef.current.close();
+  // --- WebSocket with auto-reconnect ---
+
+  const connectFrameWs = useCallback(() => {
+    if (!frameWsUrl || !mountedRef.current) return;
+    if (wsTimerRef.current) { clearTimeout(wsTimerRef.current); wsTimerRef.current = null; }
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     try {
       const ws = new WebSocket(frameWsUrl);
       ws.binaryType = "arraybuffer";
-      ws.onopen = () => setWsConnected(true);
-      ws.onclose = () => setWsConnected(false);
-      ws.onerror = () => setWsConnected(false);
+      ws.onopen = () => {
+        setWsConnected(true);
+        wsRetryRef.current = 0;
+      };
+      ws.onclose = () => {
+        setWsConnected(false);
+        if (!mountedRef.current) return;
+        const delay = WS_RECONNECT_DELAYS[Math.min(wsRetryRef.current, WS_RECONNECT_DELAYS.length - 1)];
+        wsRetryRef.current++;
+        wsTimerRef.current = setTimeout(connectFrameWs, delay);
+      };
+      ws.onerror = () => { /* onclose will fire */ };
       wsRef.current = ws;
     } catch {
       setWsConnected(false);
     }
-  }
+  }, [frameWsUrl]);
 
-  function connectEventsWs() {
-    if (!eventsWsUrl) return;
-    if (eventsWsRef.current) eventsWsRef.current.close();
+  const connectEventsWs = useCallback(() => {
+    if (!eventsWsUrl || !mountedRef.current) return;
+    if (eventsTimerRef.current) { clearTimeout(eventsTimerRef.current); eventsTimerRef.current = null; }
+    if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null; }
     try {
       const ws = new WebSocket(eventsWsUrl);
-      ws.onclose = () => setStatus(null);
+      ws.onopen = () => {
+        eventsRetryRef.current = 0;
+      };
+      ws.onclose = () => {
+        setStatus(null);
+        if (!mountedRef.current) return;
+        const delay = WS_RECONNECT_DELAYS[Math.min(eventsRetryRef.current, WS_RECONNECT_DELAYS.length - 1)];
+        eventsRetryRef.current++;
+        eventsTimerRef.current = setTimeout(connectEventsWs, delay);
+      };
+      ws.onerror = () => { /* onclose will fire */ };
       ws.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
           if (data.event === "telemetry" || data.event === "connect") {
-            setStatus((prev: any) => ({ ...prev, ...data }));
+            setStatus((prev) => ({ ...(prev || {} as DeviceStatus), ...data }));
             if (data.mode) setMode(data.mode);
           }
-        } catch { /* ignore */ }
+        } catch { /* ignore malformed */ }
       };
       eventsWsRef.current = ws;
     } catch { /* ignore */ }
-  }
+  }, [eventsWsUrl]);
 
   async function setDeviceMode(next: ModeId) {
     try {
@@ -129,8 +169,8 @@ export function App() {
       setMode(next);
       addToast(`Switched to ${MODE_LABELS[next] || next}`, "success");
       await refreshStatus();
-    } catch (e: any) {
-      addToast(`Mode switch failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      addToast(`Mode switch failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     }
   }
 
@@ -152,8 +192,8 @@ export function App() {
       setAnimFrames([]);
       setPreviewIdx(0);
       addToast("Image generated", "success");
-    } catch (e: any) {
-      addToast(`Generation failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      addToast(`Generation failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     } finally {
       setLoading(null);
     }
@@ -170,8 +210,8 @@ export function App() {
       setFrame(frames[0] ?? null);
       setPreviewIdx(0);
       addToast(`Animation generated (${frames.length} frames)`, "success");
-    } catch (e: any) {
-      addToast(`Animation failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      addToast(`Animation failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     } finally {
       setLoading(null);
     }
@@ -183,7 +223,7 @@ export function App() {
       addToast("WebSocket not connected", "error");
       return;
     }
-    const pkt = makeFramePacketRGB565(u16, frameId.current++);
+    const pkt = makeFramePacketRGB565(u16, frameIdRef.current++);
     ws.send(pkt);
   }
 
@@ -191,6 +231,7 @@ export function App() {
     if (playTimerRef.current) {
       clearInterval(playTimerRef.current);
       playTimerRef.current = null;
+      setPlaying(false);
       addToast("Playback stopped", "info");
       return;
     }
@@ -209,7 +250,13 @@ export function App() {
 
     let i = 0;
     const interval = Math.max(1, Math.floor(1000 / animFps));
+
+    // Calculate appropriate duration: loop 5 times or 30s, whichever is shorter
+    const loopDuration = frames.length * interval;
+    const totalDuration = Math.min(loopDuration * 5, 30000);
+
     addToast(`Streaming ${frames.length} frames at ${animFps} FPS`, "info");
+    setPlaying(true);
 
     playTimerRef.current = setInterval(() => {
       try {
@@ -220,6 +267,7 @@ export function App() {
       } catch {
         if (playTimerRef.current) clearInterval(playTimerRef.current);
         playTimerRef.current = null;
+        setPlaying(false);
       }
     }, interval);
 
@@ -227,9 +275,10 @@ export function App() {
       if (playTimerRef.current) {
         clearInterval(playTimerRef.current);
         playTimerRef.current = null;
+        setPlaying(false);
         addToast("Playback finished", "info");
       }
-    }, 30000);
+    }, totalDuration);
   }
 
   async function pushWeather() {
@@ -243,8 +292,8 @@ export function App() {
       await setDeviceMode("weather_fun");
       await postJson(`${deviceBase}/api/params`, { params: { tempF: temp, condition: cond, variant: 1 } });
       addToast(`${Math.round(temp)}\u00B0F, ${cond} in ${w.location?.name || loc}`, "success");
-    } catch (e: any) {
-      addToast(`Weather failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      addToast(`Weather failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     } finally {
       setLoading(null);
     }
@@ -254,8 +303,8 @@ export function App() {
     try {
       await setDeviceMode("clock_fun");
       await postJson(`${deviceBase}/api/params`, { params: { style, blink } });
-    } catch (e: any) {
-      addToast(`Failed: ${e.message}`, "error");
+    } catch (e: unknown) {
+      addToast(`Failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     }
   }
 
@@ -271,14 +320,24 @@ export function App() {
   }, [refreshStatus]);
 
   useEffect(() => {
+    mountedRef.current = true;
     connectFrameWs();
     connectEventsWs();
     return () => {
+      mountedRef.current = false;
+      if (wsTimerRef.current) clearTimeout(wsTimerRef.current);
+      if (eventsTimerRef.current) clearTimeout(eventsTimerRef.current);
       if (wsRef.current) wsRef.current.close();
       if (eventsWsRef.current) eventsWsRef.current.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameWsUrl, eventsWsUrl]);
+  }, [connectFrameWs, connectEventsWs]);
+
+  // Cleanup playback on unmount
+  useEffect(() => {
+    return () => {
+      if (playTimerRef.current) clearInterval(playTimerRef.current);
+    };
+  }, []);
 
   const isConnected = status !== null;
 
@@ -293,17 +352,17 @@ export function App() {
           </div>
         </div>
         <div className="header-status">
-          <span className="status-pill" data-status={isConnected ? "connected" : "disconnected"}>
+          <span className="status-pill" data-status={isConnected ? "connected" : "disconnected"} role="status">
             <span className="status-dot" />
             {isConnected ? (MODE_LABELS[mode] || mode) : "Offline"}
           </span>
           {wsConnected && (
-            <span className="status-pill" data-status="connected">
+            <span className="status-pill" data-status="connected" role="status">
               <span className="status-dot" />
               WS
             </span>
           )}
-          <button className="btn btn-sm btn-ghost" onClick={() => setSettingsOpen(!settingsOpen)}>
+          <button className="btn btn-sm btn-ghost" onClick={() => setSettingsOpen(!settingsOpen)} aria-expanded={settingsOpen}>
             {settingsOpen ? "Close" : "Settings"}
           </button>
         </div>
@@ -314,7 +373,14 @@ export function App() {
           <div className="card col gap-lg">
             <div className="section-header">
               <span className="section-title">Connection Settings</span>
-              <button className="btn btn-sm" onClick={() => { refreshStatus(); connectFrameWs(); connectEventsWs(); addToast("Reconnecting...", "info"); }}>
+              <button className="btn btn-sm" onClick={() => {
+                wsRetryRef.current = 0;
+                eventsRetryRef.current = 0;
+                refreshStatus();
+                connectFrameWs();
+                connectEventsWs();
+                addToast("Reconnecting...", "info");
+              }}>
                 Reconnect All
               </button>
             </div>
@@ -333,7 +399,6 @@ export function App() {
       )}
 
       <div className="main-grid">
-        {/* Left: Controls */}
         <div className="col gap-xl">
 
           <div className="stat-grid">
@@ -355,9 +420,9 @@ export function App() {
             <div className="section-header">
               <span className="section-title">Display Mode</span>
             </div>
-            <div className="mode-tabs">
+            <div className="mode-tabs" role="tablist">
               {(Object.keys(MODE_LABELS) as ModeId[]).map((m) => (
-                <button key={m} className={`mode-tab ${mode === m ? "active" : ""}`} onClick={() => setDeviceMode(m)}>
+                <button key={m} role="tab" aria-selected={mode === m} className={`mode-tab ${mode === m ? "active" : ""}`} onClick={() => setDeviceMode(m)}>
                   {MODE_LABELS[m]}
                 </button>
               ))}
@@ -373,6 +438,7 @@ export function App() {
                     min={0}
                     max={255}
                     value={brightness}
+                    aria-label="Brightness"
                     onChange={(e) => setBrightness(parseInt(e.target.value, 10))}
                     onMouseUp={() => setDeviceBrightness(brightness)}
                     onTouchEnd={() => setDeviceBrightness(brightness)}
@@ -397,11 +463,11 @@ export function App() {
             <div className="row gap-md">
               <div className="field" style={{ flex: 1 }}>
                 <div className="label">Seed</div>
-                <input type="number" value={seed} onChange={(e) => setSeed(parseInt(e.target.value, 10))} />
+                <input type="number" value={seed} onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)} />
               </div>
               <div className="field" style={{ flex: 1 }}>
                 <div className="label">Anim FPS</div>
-                <input type="number" value={animFps} min={1} max={30} onChange={(e) => setAnimFps(parseInt(e.target.value, 10))} />
+                <input type="number" value={animFps} min={1} max={30} onChange={(e) => setAnimFps(Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 1)))} />
               </div>
             </div>
             <div className="row gap-sm">
@@ -415,7 +481,7 @@ export function App() {
                 Send Frame
               </button>
               <button className="btn" disabled={!animFrames.length && !frame} onClick={playAnimOnDevice}>
-                {playTimerRef.current ? "Stop Playback" : "Play on Device"}
+                {playing ? "Stop Playback" : "Play on Device"}
               </button>
             </div>
             <div className="section-divider" />
@@ -429,6 +495,10 @@ export function App() {
               <button className="btn-preset" onClick={() => { setPrompt("rain falling city"); generateAnim(); }}>Rain</button>
               <button className="btn-preset" onClick={() => { setPrompt("time orbiting clock"); generateAnim(); }}>Orbit</button>
               <button className="btn-preset" onClick={() => { setPrompt("neon abstract shapes"); generateImage(); }}>Abstract</button>
+              <button className="btn-preset" onClick={() => { setPrompt("sunset landscape"); generateImage(); }}>Sunset</button>
+              <button className="btn-preset" onClick={() => { setPrompt("space galaxy"); generateImage(); }}>Galaxy</button>
+              <button className="btn-preset" onClick={() => { setPrompt("fire flames burning"); generateAnim(); }}>Fire</button>
+              <button className="btn-preset" onClick={() => { setPrompt("starfield warp speed"); generateAnim(); }}>Warp</button>
             </div>
           </div>
 
@@ -456,7 +526,6 @@ export function App() {
 
         </div>
 
-        {/* Right: Preview */}
         <div className="col gap-xl">
           <div className="card col gap-lg" style={{ position: "sticky", top: 80 }}>
             <div className="section-header">

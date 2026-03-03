@@ -6,8 +6,12 @@
 #include "../config.h"
 
 namespace Net {
+  static uint32_t _lastReconnectAttempt = 0;
+  static bool _wasConnected = false;
+
   inline bool setupWifi() {
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
 
     // Optional static IP
     IPAddress ip; ip.fromString(CONFIG_WIFI_STATIC_IP);
@@ -29,7 +33,32 @@ namespace Net {
       return false;
     }
     Log::info("WiFi", String("Connected: ") + WiFi.localIP().toString());
+    _wasConnected = true;
     return true;
+  }
+
+  inline void checkConnection() {
+    uint32_t now = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      if (!_wasConnected) {
+        Log::info("WiFi", String("Reconnected: ") + WiFi.localIP().toString());
+        _wasConnected = true;
+      }
+      return;
+    }
+
+    // WiFi dropped — attempt reconnect every 10 seconds
+    if (_wasConnected) {
+      Log::warn("WiFi", "Connection lost");
+      _wasConnected = false;
+    }
+
+    if (now - _lastReconnectAttempt > 10000) {
+      _lastReconnectAttempt = now;
+      Log::info("WiFi", "Attempting reconnect...");
+      WiFi.disconnect();
+      WiFi.begin(CONFIG_WIFI_SSID, CONFIG_WIFI_PASS);
+    }
   }
 
   inline void setupMDNS() {
@@ -42,14 +71,17 @@ namespace Net {
   }
 
   inline void setupTime() {
-    // Use pool.ntp.org by default; adjust TZ env via setenv("TZ", "...", 1)
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     time_t now = time(nullptr);
     uint32_t start = millis();
-    while (now < 1700000000 && millis() - start < 15000) { // wait for plausible epoch
+    while (now < 1700000000 && millis() - start < 15000) {
       delay(250);
       now = time(nullptr);
     }
-    Log::info("Time", String("Epoch: ") + (uint32_t)now);
+    if (now < 1700000000) {
+      Log::warn("Time", "NTP sync failed, clock may be wrong");
+    } else {
+      Log::info("Time", String("Epoch: ") + (uint32_t)now);
+    }
   }
 }

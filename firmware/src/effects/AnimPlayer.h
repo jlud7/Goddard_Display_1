@@ -17,6 +17,7 @@ public:
     _readIdx = 0;
     _writeIdx = 0;
     _queued = 0;
+    memset(_frames, 0, sizeof(_frames));
   }
 
   void handleCommand(const JsonVariantConst& params) override {
