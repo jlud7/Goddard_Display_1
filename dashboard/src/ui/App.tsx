@@ -35,18 +35,39 @@ const MODE_ICONS: Record<ModeId, string> = {
 };
 
 const PRESET_DATA: { label: string; icon: string; prompt: string; type: "image" | "anim" }[] = [
-  { label: "Mario",    icon: "\uD83C\uDF44", prompt: "mario pixel sprite",     type: "image" },
-  { label: "Metroid",  icon: "\uD83D\uDC7E", prompt: "metroid floating orb",   type: "image" },
-  { label: "Zelda",    icon: "\u2694\uFE0F",  prompt: "zelda triforce sword",   type: "image" },
-  { label: "Pokemon",  icon: "\u26A1",        prompt: "random pokemon",         type: "image" },
-  { label: "Dragon",   icon: "\uD83D\uDC09", prompt: "dragon breathing fire",  type: "anim"  },
-  { label: "Rain",     icon: "\uD83C\uDF27\uFE0F", prompt: "rain falling city", type: "anim"  },
-  { label: "Orbit",    icon: "\uD83E\uDE90", prompt: "time orbiting clock",    type: "anim"  },
-  { label: "Abstract", icon: "\uD83C\uDFA8", prompt: "neon abstract shapes",   type: "image" },
-  { label: "Sunset",   icon: "\uD83C\uDF05", prompt: "sunset landscape",       type: "image" },
-  { label: "Galaxy",   icon: "\uD83C\uDF0C", prompt: "space galaxy",           type: "image" },
-  { label: "Fire",     icon: "\uD83D\uDD25", prompt: "fire flames burning",    type: "anim"  },
-  { label: "Warp",     icon: "\uD83D\uDE80", prompt: "starfield warp speed",   type: "anim"  },
+  // Characters
+  { label: "Charmander", icon: "\uD83D\uDD25", prompt: "charmander breathing fire", type: "anim"  },
+  { label: "Pikachu",   icon: "\u26A1",        prompt: "pikachu in a field",        type: "image" },
+  { label: "Mario",     icon: "\uD83C\uDF44", prompt: "mario pixel sprite",        type: "image" },
+  { label: "Zelda",     icon: "\u2694\uFE0F",  prompt: "zelda triforce sword",      type: "image" },
+  // Food
+  { label: "Pizza",     icon: "\uD83C\uDF55", prompt: "pepperoni pizza",           type: "image" },
+  { label: "Burger",    icon: "\uD83C\uDF54", prompt: "cheeseburger",              type: "image" },
+  { label: "Sushi",     icon: "\uD83C\uDF63", prompt: "sushi platter",             type: "image" },
+  { label: "Ramen",     icon: "\uD83C\uDF5C", prompt: "ramen noodle bowl",         type: "image" },
+  { label: "Donut",     icon: "\uD83C\uDF69", prompt: "donut with sprinkles",      type: "image" },
+  { label: "Cake",      icon: "\uD83C\uDF82", prompt: "birthday cake",             type: "image" },
+  // Animals
+  { label: "Cat",       icon: "\uD83D\uDC31", prompt: "cute cat",                  type: "image" },
+  { label: "Dog",       icon: "\uD83D\uDC36", prompt: "happy dog",                 type: "image" },
+  { label: "Fish",      icon: "\uD83D\uDC20", prompt: "goldfish aquarium",         type: "image" },
+  { label: "Owl",       icon: "\uD83E\uDD89", prompt: "owl at night",              type: "image" },
+  // Objects
+  { label: "Robot",     icon: "\uD83E\uDD16", prompt: "robot mech",                type: "image" },
+  { label: "Skull",     icon: "\uD83D\uDC80", prompt: "glowing skull",             type: "image" },
+  { label: "Ghost",     icon: "\uD83D\uDC7B", prompt: "spooky ghost",              type: "image" },
+  { label: "Heart",     icon: "\u2764\uFE0F",  prompt: "red heart love",            type: "anim"  },
+  { label: "Gem",       icon: "\uD83D\uDC8E", prompt: "crystal gem diamond",       type: "image" },
+  { label: "Rocket",    icon: "\uD83D\uDE80", prompt: "rocket spaceship",          type: "image" },
+  // Scenes
+  { label: "Dragon",    icon: "\uD83D\uDC09", prompt: "dragon breathing fire",     type: "anim"  },
+  { label: "Ocean",     icon: "\uD83C\uDF0A", prompt: "ocean waves rolling",       type: "anim"  },
+  { label: "Sunset",    icon: "\uD83C\uDF05", prompt: "sunset landscape",          type: "image" },
+  { label: "Galaxy",    icon: "\uD83C\uDF0C", prompt: "space galaxy",              type: "image" },
+  { label: "Snow",      icon: "\u2744\uFE0F",  prompt: "snowy winter scene",        type: "anim"  },
+  { label: "Rainbow",   icon: "\uD83C\uDF08", prompt: "rainbow shimmer",           type: "anim"  },
+  { label: "City",      icon: "\uD83C\uDF03", prompt: "cityscape night skyline",   type: "image" },
+  { label: "Rain",      icon: "\uD83C\uDF27\uFE0F", prompt: "rain falling city",  type: "anim"  },
 ];
 
 const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
@@ -73,7 +94,7 @@ export function App() {
   const [brightness, setBrightness] = useState(160);
   const [gammaEnabled, setGammaEnabled] = useState(true);
 
-  const [prompt, setPrompt] = useState("dragon breathing fire");
+  const [prompt, setPrompt] = useState("charmander breathing fire");
   const [seed, setSeed] = useState(1234);
 
   const [frame, setFrame] = useState<Uint16Array | null>(null);
@@ -642,7 +663,7 @@ export function App() {
             <div className="section-header">
               <div>
                 <span className="section-title">Pixel Art Studio</span>
-                <div className="section-subtitle">Generate images and animations for the display</div>
+                <div className="section-subtitle">Describe anything — characters, food, scenes — and see it in pixel art</div>
               </div>
             </div>
             <div className="field">
