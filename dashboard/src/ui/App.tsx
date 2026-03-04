@@ -25,6 +25,30 @@ const MODE_LABELS: Record<ModeId, string> = {
   text_scroll: "Scroller",
 };
 
+const MODE_ICONS: Record<ModeId, string> = {
+  clock_fun: "\u23F0",
+  weather_fun: "\u26C5",
+  anim_player: "\u25B6",
+  rainbow: "\uD83C\uDF08",
+  starfield: "\u2728",
+  text_scroll: "\uD83D\uDCDC",
+};
+
+const PRESET_DATA: { label: string; icon: string; prompt: string; type: "image" | "anim" }[] = [
+  { label: "Mario",    icon: "\uD83C\uDF44", prompt: "mario pixel sprite",     type: "image" },
+  { label: "Metroid",  icon: "\uD83D\uDC7E", prompt: "metroid floating orb",   type: "image" },
+  { label: "Zelda",    icon: "\u2694\uFE0F",  prompt: "zelda triforce sword",   type: "image" },
+  { label: "Pokemon",  icon: "\u26A1",        prompt: "random pokemon",         type: "image" },
+  { label: "Dragon",   icon: "\uD83D\uDC09", prompt: "dragon breathing fire",  type: "anim"  },
+  { label: "Rain",     icon: "\uD83C\uDF27\uFE0F", prompt: "rain falling city", type: "anim"  },
+  { label: "Orbit",    icon: "\uD83E\uDE90", prompt: "time orbiting clock",    type: "anim"  },
+  { label: "Abstract", icon: "\uD83C\uDFA8", prompt: "neon abstract shapes",   type: "image" },
+  { label: "Sunset",   icon: "\uD83C\uDF05", prompt: "sunset landscape",       type: "image" },
+  { label: "Galaxy",   icon: "\uD83C\uDF0C", prompt: "space galaxy",           type: "image" },
+  { label: "Fire",     icon: "\uD83D\uDD25", prompt: "fire flames burning",    type: "anim"  },
+  { label: "Warp",     icon: "\uD83D\uDE80", prompt: "starfield warp speed",   type: "anim"  },
+];
+
 const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
 
 function formatUptime(ms: number): string {
@@ -47,6 +71,7 @@ export function App() {
   const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [mode, setMode] = useState<ModeId>("clock_fun");
   const [brightness, setBrightness] = useState(160);
+  const [gammaEnabled, setGammaEnabled] = useState(true);
 
   const [prompt, setPrompt] = useState("dragon breathing fire");
   const [seed, setSeed] = useState(1234);
@@ -63,6 +88,17 @@ export function App() {
 
   const [weatherLocation, setWeatherLocation] = useState("Miami, FL");
 
+  // Effect parameters
+  const [rainbowSpeed, setRainbowSpeed] = useState(3);
+  const [rainbowScale, setRainbowScale] = useState(8);
+  const [rainbowStyle, setRainbowStyle] = useState(0);
+  const [starSpeed, setStarSpeed] = useState(3);
+  const [starDensity, setStarDensity] = useState(40);
+  const [starWarp, setStarWarp] = useState(false);
+  const [scrollText, setScrollText] = useState("GODDARD DISPLAY");
+  const [scrollSpeed, setScrollSpeed] = useState(5);
+  const [scrollRainbow, setScrollRainbow] = useState(true);
+
   const wsRef = useRef<WebSocket | null>(null);
   const eventsWsRef = useRef<WebSocket | null>(null);
   const frameIdRef = useRef(0);
@@ -77,10 +113,8 @@ export function App() {
 
   const { toasts, addToast, removeToast } = useToast();
 
-  // Keep brightness ref in sync for slider onMouseUp/onTouchEnd
   useEffect(() => { brightnessRef.current = brightness; }, [brightness]);
 
-  // Debounce deviceBase so WS doesn't reconnect on every keystroke
   const [debouncedDeviceBase, setDebouncedDeviceBase] = useState(deviceBase);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedDeviceBase(deviceBase), 500);
@@ -109,16 +143,15 @@ export function App() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const s: DeviceStatus = await getJson(`${deviceBase}/api/status`);
+      const s = await getJson(`${deviceBase}/api/status`) as DeviceStatus;
       setStatus(s);
       setBrightness(s.brightness);
       setMode(s.mode);
+      setGammaEnabled(s.gamma);
     } catch {
       setStatus(null);
     }
   }, [deviceBase]);
-
-  // --- WebSocket with auto-reconnect ---
 
   const connectFrameWs = useCallback(() => {
     if (!frameWsUrl || !mountedRef.current) return;
@@ -127,10 +160,7 @@ export function App() {
     try {
       const ws = new WebSocket(frameWsUrl);
       ws.binaryType = "arraybuffer";
-      ws.onopen = () => {
-        setWsConnected(true);
-        wsRetryRef.current = 0;
-      };
+      ws.onopen = () => { setWsConnected(true); wsRetryRef.current = 0; };
       ws.onclose = () => {
         setWsConnected(false);
         if (!mountedRef.current) return;
@@ -138,7 +168,7 @@ export function App() {
         wsRetryRef.current++;
         wsTimerRef.current = setTimeout(connectFrameWs, delay);
       };
-      ws.onerror = () => { /* onclose will fire */ };
+      ws.onerror = () => {};
       wsRef.current = ws;
     } catch {
       setWsConnected(false);
@@ -151,9 +181,7 @@ export function App() {
     if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null; }
     try {
       const ws = new WebSocket(eventsWsUrl);
-      ws.onopen = () => {
-        eventsRetryRef.current = 0;
-      };
+      ws.onopen = () => { eventsRetryRef.current = 0; };
       ws.onclose = () => {
         setStatus(null);
         if (!mountedRef.current) return;
@@ -161,22 +189,24 @@ export function App() {
         eventsRetryRef.current++;
         eventsTimerRef.current = setTimeout(connectEventsWs, delay);
       };
-      ws.onerror = () => { /* onclose will fire */ };
+      ws.onerror = () => {};
       ws.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
           if (data.event === "telemetry" || data.event === "connect") {
             setStatus((prev) => {
-              if (!prev) return prev; // don't build partial status from telemetry alone
+              if (!prev) return prev;
               return { ...prev, ...data };
             });
             if (data.mode) setMode(data.mode);
           }
-        } catch { /* ignore malformed */ }
+        } catch {}
       };
       eventsWsRef.current = ws;
-    } catch { /* ignore */ }
+    } catch {}
   }, [eventsWsUrl]);
+
+  // --- Actions ---
 
   async function setDeviceMode(next: ModeId) {
     try {
@@ -195,6 +225,34 @@ export function App() {
       setBrightness(val);
     } catch {
       addToast("Brightness update failed", "error");
+    }
+  }
+
+  async function toggleGamma() {
+    const next = !gammaEnabled;
+    try {
+      await postJson(`${deviceBase}/api/gamma`, { enabled: next });
+      setGammaEnabled(next);
+      addToast(`Gamma ${next ? "enabled" : "disabled"}`, "success");
+    } catch {
+      addToast("Gamma toggle failed", "error");
+    }
+  }
+
+  async function saveSettingsToDevice() {
+    try {
+      await postJson(`${deviceBase}/api/save`, {});
+      addToast("Settings saved to flash", "success");
+    } catch {
+      addToast("Save failed", "error");
+    }
+  }
+
+  async function sendEffectParams(params: Record<string, unknown>) {
+    try {
+      await postJson(`${deviceBase}/api/params`, { params });
+    } catch {
+      addToast("Parameter update failed", "error");
     }
   }
 
@@ -222,11 +280,11 @@ export function App() {
       const res = await postJson(`${renderBase}/render/anim`, {
         prompt: p, seed, frames: 24, fps: animFps, style: "pixel_anim",
       }) as { frames_b64: string[] };
-      const frames: Uint16Array[] = res.frames_b64.map((b64: string) => decodeB64ToU16LE(b64));
-      setAnimFrames(frames);
-      setFrame(frames[0] ?? null);
+      const decoded: Uint16Array[] = res.frames_b64.map((b64: string) => decodeB64ToU16LE(b64));
+      setAnimFrames(decoded);
+      setFrame(decoded[0] ?? null);
       setPreviewIdx(0);
-      addToast(`Animation generated (${frames.length} frames)`, "success");
+      addToast(`Animation generated (${decoded.length} frames)`, "success");
     } catch (e: unknown) {
       addToast(`Animation failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     } finally {
@@ -240,8 +298,7 @@ export function App() {
       addToast("WebSocket not connected", "error");
       return;
     }
-    const pkt = makeFramePacketRGB565(u16, frameIdRef.current++);
-    ws.send(pkt);
+    ws.send(makeFramePacketRGB565(u16, frameIdRef.current++));
   }
 
   function stopPlayback() {
@@ -256,51 +313,35 @@ export function App() {
       addToast("Playback stopped", "info");
       return;
     }
-
     await setDeviceMode("anim_player");
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      addToast("WebSocket not connected. Reconnect first.", "error");
+      addToast("WebSocket not connected", "error");
       return;
     }
     const frames = animFrames.length ? animFrames : (frame ? [frame] : []);
-    if (!frames.length) {
-      addToast("No frames to play", "error");
-      return;
-    }
+    if (!frames.length) { addToast("No frames to play", "error"); return; }
 
     let i = 0;
     const interval = Math.max(1, Math.floor(1000 / animFps));
-
-    // Calculate appropriate duration: loop 5 times or 30s, whichever is shorter
-    const loopDuration = frames.length * interval;
-    const totalDuration = Math.min(loopDuration * 5, 30000);
+    const totalDuration = Math.min(frames.length * interval * 5, 30000);
 
     addToast(`Streaming ${frames.length} frames at ${animFps} FPS`, "info");
     setPlaying(true);
 
     playTimerRef.current = setInterval(() => {
-      const currentWs = wsRef.current;
-      if (!currentWs || currentWs.readyState !== WebSocket.OPEN) {
-        stopPlayback();
-        return;
-      }
+      const curWs = wsRef.current;
+      if (!curWs || curWs.readyState !== WebSocket.OPEN) { stopPlayback(); return; }
       try {
-        const pkt = makeFramePacketRGB565(frames[i], frameIdRef.current++);
-        currentWs.send(pkt);
+        curWs.send(makeFramePacketRGB565(frames[i], frameIdRef.current++));
         setPreviewIdx(i);
         setFrame(frames[i]);
         i = (i + 1) % frames.length;
-      } catch {
-        stopPlayback();
-      }
+      } catch { stopPlayback(); }
     }, interval);
 
     playStopTimerRef.current = setTimeout(() => {
-      if (playTimerRef.current) {
-        stopPlayback();
-        addToast("Playback finished", "info");
-      }
+      if (playTimerRef.current) { stopPlayback(); addToast("Playback finished", "info"); }
     }, totalDuration);
   }
 
@@ -308,13 +349,11 @@ export function App() {
     setLoading("weather");
     try {
       const loc = weatherLocation.trim() || "Miami,FL";
-      const w = await getJson(`${renderBase}/weather?location=${encodeURIComponent(loc)}&units=imperial`);
+      const w = await getJson(`${renderBase}/weather?location=${encodeURIComponent(loc)}&units=imperial`) as Record<string, any>;
       if (!w.ok) throw new Error("Weather fetch failed");
-      const temp = w.current.temp;
-      const cond = w.current.condition;
       await setDeviceMode("weather_fun");
-      await postJson(`${deviceBase}/api/params`, { params: { tempF: temp, condition: cond, variant: 1 } });
-      addToast(`${Math.round(temp)}\u00B0F, ${cond} in ${w.location?.name || loc}`, "success");
+      await postJson(`${deviceBase}/api/params`, { params: { tempF: w.current.temp, condition: w.current.condition, variant: 1 } });
+      addToast(`${Math.round(w.current.temp)}\u00B0F, ${w.current.condition} in ${w.location?.name || loc}`, "success");
     } catch (e: unknown) {
       addToast(`Weather failed: ${e instanceof Error ? e.message : "unknown error"}`, "error");
     } finally {
@@ -331,16 +370,28 @@ export function App() {
     }
   }
 
-  function selectTimelineFrame(idx: number) {
-    if (animFrames[idx]) {
-      setFrame(animFrames[idx]);
-      setPreviewIdx(idx);
-    }
+  function randomizeSeed() {
+    setSeed(Math.floor(Math.random() * 999999));
   }
 
+  // --- Keyboard shortcuts ---
   useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+    function handleKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (e.key === "g" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); generateImage(); }
+      else if (e.key === "a" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); generateAnim(); }
+      else if (e.key === "r" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); randomizeSeed(); }
+      else if (e.key === "p" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); playAnimOnDevice(); }
+      else if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveSettingsToDevice(); }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  });
+
+  // --- Lifecycle ---
+  useEffect(() => { refreshStatus(); }, [refreshStatus]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -355,7 +406,6 @@ export function App() {
     };
   }, [connectFrameWs, connectEventsWs]);
 
-  // Cleanup playback on unmount
   useEffect(() => {
     return () => {
       if (playTimerRef.current) clearInterval(playTimerRef.current);
@@ -364,6 +414,109 @@ export function App() {
   }, []);
 
   const isConnected = status !== null;
+
+  // --- Mode-specific parameter panels ---
+  function renderEffectControls() {
+    switch (mode) {
+      case "rainbow":
+        return (
+          <div className="effect-controls">
+            <div className="label">Rainbow Parameters</div>
+            <div className="param-row">
+              <span className="label">Speed</span>
+              <input type="range" className="param-slider" min={1} max={20} value={rainbowSpeed}
+                onChange={(e) => setRainbowSpeed(parseInt(e.target.value, 10))}
+                onMouseUp={() => sendEffectParams({ speed: rainbowSpeed, scale: rainbowScale, style: rainbowStyle })}
+                onTouchEnd={() => sendEffectParams({ speed: rainbowSpeed, scale: rainbowScale, style: rainbowStyle })}
+              />
+              <span className="param-value">{rainbowSpeed}</span>
+            </div>
+            <div className="param-row">
+              <span className="label">Scale</span>
+              <input type="range" className="param-slider" min={1} max={32} value={rainbowScale}
+                onChange={(e) => setRainbowScale(parseInt(e.target.value, 10))}
+                onMouseUp={() => sendEffectParams({ speed: rainbowSpeed, scale: rainbowScale, style: rainbowStyle })}
+                onTouchEnd={() => sendEffectParams({ speed: rainbowSpeed, scale: rainbowScale, style: rainbowStyle })}
+              />
+              <span className="param-value">{rainbowScale}</span>
+            </div>
+            <div className="row gap-sm">
+              {["Diagonal", "Radial", "Wave"].map((label, i) => (
+                <button key={i} className={`btn btn-sm ${rainbowStyle === i ? "btn-primary" : ""}`}
+                  onClick={() => { setRainbowStyle(i); sendEffectParams({ speed: rainbowSpeed, scale: rainbowScale, style: i }); }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      case "starfield":
+        return (
+          <div className="effect-controls">
+            <div className="label">Starfield Parameters</div>
+            <div className="param-row">
+              <span className="label">Speed</span>
+              <input type="range" className="param-slider" min={1} max={10} value={starSpeed}
+                onChange={(e) => setStarSpeed(parseInt(e.target.value, 10))}
+                onMouseUp={() => sendEffectParams({ speed: starSpeed, density: starDensity, warp: starWarp })}
+                onTouchEnd={() => sendEffectParams({ speed: starSpeed, density: starDensity, warp: starWarp })}
+              />
+              <span className="param-value">{starSpeed}</span>
+            </div>
+            <div className="param-row">
+              <span className="label">Density</span>
+              <input type="range" className="param-slider" min={10} max={80} value={starDensity}
+                onChange={(e) => setStarDensity(parseInt(e.target.value, 10))}
+                onMouseUp={() => sendEffectParams({ speed: starSpeed, density: starDensity, warp: starWarp })}
+                onTouchEnd={() => sendEffectParams({ speed: starSpeed, density: starDensity, warp: starWarp })}
+              />
+              <span className="param-value">{starDensity}</span>
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-label">Warp Mode</span>
+              <input type="checkbox" className="toggle" checked={starWarp}
+                onChange={() => { const next = !starWarp; setStarWarp(next); sendEffectParams({ speed: starSpeed, density: starDensity, warp: next }); }}
+              />
+            </div>
+          </div>
+        );
+      case "text_scroll":
+        return (
+          <div className="effect-controls">
+            <div className="label">Scroller Parameters</div>
+            <div className="scroll-input-row">
+              <div className="field">
+                <input type="text" value={scrollText} maxLength={256}
+                  onChange={(e) => setScrollText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") sendEffectParams({ text: scrollText, speed: scrollSpeed, rainbow: scrollRainbow }); }}
+                  placeholder="Enter scroll text..."
+                />
+              </div>
+              <button className="btn btn-sm" onClick={() => sendEffectParams({ text: scrollText, speed: scrollSpeed, rainbow: scrollRainbow })}>
+                Set
+              </button>
+            </div>
+            <div className="param-row">
+              <span className="label">Speed</span>
+              <input type="range" className="param-slider" min={1} max={20} value={scrollSpeed}
+                onChange={(e) => setScrollSpeed(parseInt(e.target.value, 10))}
+                onMouseUp={() => sendEffectParams({ text: scrollText, speed: scrollSpeed, rainbow: scrollRainbow })}
+                onTouchEnd={() => sendEffectParams({ text: scrollText, speed: scrollSpeed, rainbow: scrollRainbow })}
+              />
+              <span className="param-value">{scrollSpeed}</span>
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-label">Rainbow Colors</span>
+              <input type="checkbox" className="toggle" checked={scrollRainbow}
+                onChange={() => { const next = !scrollRainbow; setScrollRainbow(next); sendEffectParams({ text: scrollText, speed: scrollSpeed, rainbow: next }); }}
+              />
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  }
 
   return (
     <>
@@ -376,6 +529,7 @@ export function App() {
           </div>
         </div>
         <div className="header-status">
+          {status?.firmware && <span className="fw-badge">v{status.firmware}</span>}
           <span className="status-pill" data-status={isConnected ? "connected" : "disconnected"} role="status">
             <span className="status-dot" />
             {isConnected ? (MODE_LABELS[mode] || mode) : "Offline"}
@@ -397,16 +551,21 @@ export function App() {
           <div className="card col gap-lg">
             <div className="section-header">
               <span className="section-title">Connection Settings</span>
-              <button className="btn btn-sm" onClick={() => {
-                wsRetryRef.current = 0;
-                eventsRetryRef.current = 0;
-                refreshStatus();
-                connectFrameWs();
-                connectEventsWs();
-                addToast("Reconnecting...", "info");
-              }}>
-                Reconnect All
-              </button>
+              <div className="row gap-sm">
+                <button className="btn btn-sm" onClick={() => {
+                  wsRetryRef.current = 0;
+                  eventsRetryRef.current = 0;
+                  refreshStatus();
+                  connectFrameWs();
+                  connectEventsWs();
+                  addToast("Reconnecting...", "info");
+                }}>
+                  Reconnect
+                </button>
+                <button className="btn btn-sm btn-primary" onClick={saveSettingsToDevice}>
+                  Save to Flash
+                </button>
+              </div>
             </div>
             <div className="row gap-lg">
               <div className="field" style={{ flex: 1 }}>
@@ -426,17 +585,21 @@ export function App() {
         <div className="col gap-xl">
 
           <div className="stat-grid">
-            <div className="stat-card">
+            <div className="stat-card" data-type="brightness">
               <div className="stat-value">{status?.brightness ?? "--"}</div>
               <div className="stat-label">Brightness</div>
             </div>
-            <div className="stat-card">
+            <div className="stat-card" data-type="heap">
               <div className="stat-value">{status?.heapFree ? formatHeap(status.heapFree) : "--"}</div>
               <div className="stat-label">Free Heap</div>
             </div>
-            <div className="stat-card">
+            <div className="stat-card" data-type="uptime">
               <div className="stat-value">{status?.uptimeMs ? formatUptime(status.uptimeMs) : "--"}</div>
               <div className="stat-label">Uptime</div>
+            </div>
+            <div className="stat-card" data-type="gamma">
+              <div className="stat-value">{gammaEnabled ? "2.2" : "Off"}</div>
+              <div className="stat-label">Gamma</div>
             </div>
           </div>
 
@@ -447,28 +610,31 @@ export function App() {
             <div className="mode-tabs" role="tablist">
               {(Object.keys(MODE_LABELS) as ModeId[]).map((m) => (
                 <button key={m} role="tab" aria-selected={mode === m} className={`mode-tab ${mode === m ? "active" : ""}`} onClick={() => setDeviceMode(m)}>
+                  <span style={{ marginRight: 4 }}>{MODE_ICONS[m]}</span>
                   {MODE_LABELS[m]}
                 </button>
               ))}
             </div>
+
+            {renderEffectControls()}
+
             <div className="section-divider" />
             <div className="field">
               <div className="label">Brightness</div>
               <div className="brightness-display">
                 <span className="brightness-value">{brightness}</span>
                 <div className="brightness-slider-track">
-                  <input
-                    type="range"
-                    min={0}
-                    max={255}
-                    value={brightness}
-                    aria-label="Brightness"
+                  <input type="range" min={0} max={255} value={brightness} aria-label="Brightness"
                     onChange={(e) => setBrightness(parseInt(e.target.value, 10))}
                     onMouseUp={() => setDeviceBrightness(brightnessRef.current)}
                     onTouchEnd={() => setDeviceBrightness(brightnessRef.current)}
                   />
                 </div>
               </div>
+            </div>
+            <div className="toggle-row">
+              <span className="toggle-label">Gamma Correction (2.2)</span>
+              <input type="checkbox" className="toggle" checked={gammaEnabled} onChange={toggleGamma} aria-label="Toggle gamma correction" />
             </div>
           </div>
 
@@ -485,9 +651,14 @@ export function App() {
               <div className="muted">{prompt.length}/200 characters</div>
             </div>
             <div className="row gap-md">
-              <div className="field" style={{ flex: 1 }}>
-                <div className="label">Seed</div>
-                <input type="number" value={seed} onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)} />
+              <div className="seed-row" style={{ flex: 1 }}>
+                <div className="field">
+                  <div className="label">Seed</div>
+                  <input type="number" value={seed} onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)} />
+                </div>
+                <button className="btn-icon-sm" onClick={randomizeSeed} title="Random seed (R)" aria-label="Randomize seed">
+                  {"\uD83C\uDFB2"}
+                </button>
               </div>
               <div className="field" style={{ flex: 1 }}>
                 <div className="label">Anim FPS</div>
@@ -496,33 +667,32 @@ export function App() {
             </div>
             <div className="row gap-sm">
               <button className="btn btn-primary" disabled={!!loading} onClick={() => generateImage()}>
-                {loading === "image" ? <><span className="spinner" /> Generating...</> : "Generate Image"}
+                {loading === "image" ? <><span className="spinner" /> Generating...</> : <>Generate Image <span className="kbd">G</span></>}
               </button>
               <button className="btn btn-primary" disabled={!!loading} onClick={() => generateAnim()}>
-                {loading === "anim" ? <><span className="spinner" /> Generating...</> : "Generate Animation"}
+                {loading === "anim" ? <><span className="spinner" /> Generating...</> : <>Generate Anim <span className="kbd">A</span></>}
               </button>
               <button className="btn" disabled={!frame} onClick={() => { if (frame) { setDeviceMode("anim_player"); sendFrameOnce(frame); } }}>
                 Send Frame
               </button>
               <button className="btn" disabled={!animFrames.length && !frame} onClick={playAnimOnDevice}>
-                {playing ? "Stop Playback" : "Play on Device"}
+                {playing ? "Stop" : <>Play <span className="kbd">P</span></>}
               </button>
             </div>
             <div className="section-divider" />
             <div className="section-title">Presets</div>
             <div className="preset-grid">
-              <button className="btn-preset" onClick={() => { setPrompt("mario pixel sprite"); generateImage("mario pixel sprite"); }}>Mario</button>
-              <button className="btn-preset" onClick={() => { setPrompt("metroid floating orb"); generateImage("metroid floating orb"); }}>Metroid</button>
-              <button className="btn-preset" onClick={() => { setPrompt("zelda triforce sword"); generateImage("zelda triforce sword"); }}>Zelda</button>
-              <button className="btn-preset" onClick={() => { setPrompt("random pokemon"); generateImage("random pokemon"); }}>Pokemon</button>
-              <button className="btn-preset" onClick={() => { setPrompt("dragon breathing fire"); generateAnim("dragon breathing fire"); }}>Dragon</button>
-              <button className="btn-preset" onClick={() => { setPrompt("rain falling city"); generateAnim("rain falling city"); }}>Rain</button>
-              <button className="btn-preset" onClick={() => { setPrompt("time orbiting clock"); generateAnim("time orbiting clock"); }}>Orbit</button>
-              <button className="btn-preset" onClick={() => { setPrompt("neon abstract shapes"); generateImage("neon abstract shapes"); }}>Abstract</button>
-              <button className="btn-preset" onClick={() => { setPrompt("sunset landscape"); generateImage("sunset landscape"); }}>Sunset</button>
-              <button className="btn-preset" onClick={() => { setPrompt("space galaxy"); generateImage("space galaxy"); }}>Galaxy</button>
-              <button className="btn-preset" onClick={() => { setPrompt("fire flames burning"); generateAnim("fire flames burning"); }}>Fire</button>
-              <button className="btn-preset" onClick={() => { setPrompt("starfield warp speed"); generateAnim("starfield warp speed"); }}>Warp</button>
+              {PRESET_DATA.map((p) => (
+                <button key={p.label} className="btn-preset"
+                  onClick={() => {
+                    setPrompt(p.prompt);
+                    if (p.type === "image") generateImage(p.prompt);
+                    else generateAnim(p.prompt);
+                  }}>
+                  <span className="preset-icon">{p.icon}</span>
+                  {p.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -533,7 +703,9 @@ export function App() {
             <div className="weather-row">
               <div className="field" style={{ flex: 1 }}>
                 <div className="label">Weather Location</div>
-                <input type="text" value={weatherLocation} onChange={(e) => setWeatherLocation(e.target.value)} placeholder="City, State" />
+                <input type="text" value={weatherLocation} onChange={(e) => setWeatherLocation(e.target.value)} placeholder="City, State"
+                  onKeyDown={(e) => { if (e.key === "Enter") pushWeather(); }}
+                />
               </div>
               <button className="btn btn-primary" disabled={!!loading} onClick={pushWeather} style={{ height: 38 }}>
                 {loading === "weather" ? <span className="spinner" /> : "Push Weather"}
@@ -558,11 +730,15 @@ export function App() {
             </div>
             <PixelPreview frame={frame} scale={6} />
             {animFrames.length > 0 && (
-              <AnimTimeline frames={animFrames} activeIndex={previewIdx} onSelect={selectTimelineFrame} />
+              <AnimTimeline frames={animFrames} activeIndex={previewIdx} onSelect={(idx) => { setFrame(animFrames[idx]); setPreviewIdx(idx); }} />
+            )}
+            {animFrames.length > 0 && (
+              <div className="muted" style={{ textAlign: "center" }}>
+                Frame {previewIdx + 1} / {animFrames.length}
+              </div>
             )}
             <div className="muted">
-              For best results use short prompts, large shapes, and high contrast colors. The procedural
-              provider generates offline demos. Swap in a real image model via the render service provider interface.
+              Shortcuts: <span className="kbd">G</span> image, <span className="kbd">A</span> anim, <span className="kbd">R</span> seed, <span className="kbd">P</span> play
             </div>
           </div>
         </div>
