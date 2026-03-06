@@ -47,8 +47,12 @@ export function PixelPreview({ frame, scale = 6 }: Props) {
       pixels[off + 3] = 255;
     }
 
-    // Render to offscreen canvas at 1:1, then draw scaled
-    const offscreen = new OffscreenCanvas(W, H);
+    // Render to an offscreen surface at 1:1, then draw scaled.
+    const offscreen = typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(W, H)
+      : document.createElement("canvas");
+    offscreen.width = W;
+    offscreen.height = H;
     const offCtx = offscreen.getContext("2d");
     if (offCtx) {
       offCtx.putImageData(imgData, 0, 0);

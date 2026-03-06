@@ -14,7 +14,7 @@ static ApiServer* api = nullptr;
 
 static uint32_t lastTick = 0;
 static uint32_t lastSave = 0;
-static volatile bool settingsDirty = false;
+static bool settingsDirty = false;
 static bool wifiReady = false;
 
 void setup() {

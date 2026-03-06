@@ -5,6 +5,8 @@ from .base import Provider
 
 
 class ProceduralProvider(Provider):
+    provider_id = "procedural"
+
     def image(self, prompt: str, seed: int | None = None) -> Image.Image:
         rng = random.Random(seed)
         prompt_l = prompt.lower()

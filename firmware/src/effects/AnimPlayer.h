@@ -1,6 +1,8 @@
 #pragma once
+#include "../config.h"
 #include "Effect.h"
 #include "../render/Color.h"
+#include "../util/Log.h"
 #include <Arduino.h>
 
 // External RGB565 frames streamed over WS/UDP are queued into a jitter buffer.
@@ -32,7 +34,8 @@ public:
     uint32_t frameMs = 1000 / (uint32_t)_fps;
     while (_accum >= frameMs) {
       _accum -= frameMs;
-      if (_playing && _queued > 0) {
+      // Hold on the last received frame until a newer one is available.
+      if (_playing && _queued > 1) {
         _readIdx = (_readIdx + 1) % FRAME_JITTER_BUFFER;
         _queued--;
         _frameCount++;
@@ -60,20 +63,26 @@ public:
   void pushFrameRGB565(const uint16_t* frame, size_t pixels) override {
     if (pixels != (size_t)PANEL_RES_X * PANEL_RES_Y) return;
 
-    // Don't overwrite the slot currently being read
+    if (_queued == 0) {
+      memcpy(_frames[_writeIdx], frame, (size_t)PANEL_RES_X * PANEL_RES_Y * 2);
+      _readIdx = _writeIdx;
+      _queued = 1;
+      _everReceived = true;
+      Log::info("Anim", String("First frame accepted, pixels=") + pixels);
+      return;
+    }
+
+    // Don't overwrite the slot currently being displayed.
     int next = (_writeIdx + 1) % FRAME_JITTER_BUFFER;
-    if (next == _readIdx && _queued > 0) {
-      // Buffer full — drop this frame to prevent tearing
+    if (next == _readIdx) {
       return;
     }
 
     memcpy(_frames[next], frame, (size_t)PANEL_RES_X * PANEL_RES_Y * 2);
     _writeIdx = next;
     _everReceived = true;
-    if (_queued < FRAME_JITTER_BUFFER - 1) _queued++;
-
-    // If we had nothing, immediately point read at this frame.
-    if (_queued == 1 && _frameCount == 0) _readIdx = _writeIdx;
+    if (_queued < FRAME_JITTER_BUFFER) _queued++;
+    Log::info("Anim", String("Frame queued, queued=") + _queued + " read=" + _readIdx + " write=" + _writeIdx);
   }
 
 private:

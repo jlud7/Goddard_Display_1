@@ -1,4 +1,5 @@
 #pragma once
+#include <sys/time.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <time.h>
@@ -8,6 +9,12 @@
 namespace Net {
   static uint32_t _lastReconnectAttempt = 0;
   static bool _wasConnected = false;
+
+  inline void applyTimeZone(const char* tz) {
+    const char* value = (tz && tz[0]) ? tz : CONFIG_TZ_INFO;
+    setenv("TZ", value, 1);
+    tzset();
+  }
 
   inline bool setupWifi() {
     WiFi.mode(WIFI_STA);
@@ -71,6 +78,7 @@ namespace Net {
   }
 
   inline void setupTime() {
+    applyTimeZone(CONFIG_TZ_INFO);
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     time_t now = time(nullptr);
     uint32_t start = millis();

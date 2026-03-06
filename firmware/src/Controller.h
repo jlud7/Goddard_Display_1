@@ -21,7 +21,7 @@ public:
     _effects.push_back(std::unique_ptr<Effect>(new Rainbow()));
     _effects.push_back(std::unique_ptr<Effect>(new Starfield()));
     _effects.push_back(std::unique_ptr<Effect>(new TextScroll()));
-    setMode("clock_fun", JsonVariantConst());
+    setMode("rainbow", JsonVariantConst());
   }
 
   Effect* current() { return _current; }

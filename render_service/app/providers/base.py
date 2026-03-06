@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from PIL import Image
 
 class Provider(ABC):
+    provider_id = "base"
+
     @abstractmethod
     def image(self, prompt: str, seed: int | None = None) -> Image.Image:
         raise NotImplementedError

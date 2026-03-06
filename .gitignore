@@ -1,0 +1,13 @@
+dashboard/node_modules/
+dashboard/dist/
+dashboard/*.tsbuildinfo
+
+firmware/.pio/
+
+render_service/.env
+
+__pycache__/
+*.pyc
+*.pyo
+
+*.bak
